@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: soiling-analysis
+    runtime: python
+    region: singapore
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m soiling_analysis.web_server --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: TIGERDATA_HOST
+        sync: false
+      - key: TIGERDATA_PORT
+        sync: false
+      - key: TIGERDATA_DB
+        sync: false
+      - key: TIGERDATA_USER
+        sync: false
+      - key: TIGERDATA_PASSWORD
+        sync: false
+      - key: TIGERDATA_SSLMODE
+        value: require
+      - key: TIGERDATA_CONNECT_TIMEOUT
+        value: "10"
+      - key: SOILING_BASIC_AUTH_USERNAME
+        value: kedar
+      - key: SOILING_BASIC_AUTH_PASSWORD
+        sync: false
+      - key: SOILING_ALLOWED_ORIGINS
+        value: "*"

@@ -114,7 +114,8 @@ label {
   font-weight: 800;
 }
 
-input {
+input,
+select {
   width: 100%;
   min-height: 40px;
   padding: 8px 10px;
@@ -125,7 +126,8 @@ input {
   font: inherit;
 }
 
-input:focus {
+input:focus,
+select:focus {
   border-color: var(--teal);
   outline: 3px solid rgba(15, 118, 110, 0.14);
 }

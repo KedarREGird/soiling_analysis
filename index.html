@@ -24,8 +24,19 @@
         <section>
           <h2>Target</h2>
           <label>
-            Plant UUID
-            <input name="plant_id" autocomplete="off" required>
+            Plant
+            <select name="plant_id" required>
+              <option
+                value="b0000000-0000-0000-0000-000000000002"
+                data-default-inverter="ACB01-INV05"
+                data-default-string-port="4"
+              >Shambhavi</option>
+              <option
+                value="b0000000-0000-0000-0000-000000000001"
+                data-default-inverter="ACB01-INV01"
+                data-default-string-port="4"
+              >Suryaveer</option>
+            </select>
           </label>
           <label>
             Inverter name
@@ -227,6 +238,9 @@
         }
       };
 
+      const apiBase = window.location.protocol === "file:" ? "http://127.0.0.1:8765" : "";
+      const apiPath = (path) => `${apiBase}${path}`;
+
       const form = document.getElementById("analysisForm");
       const statusEl = document.getElementById("serverStatus");
       const runButton = document.getElementById("runButton");
@@ -255,7 +269,7 @@
       async function loadDefaults() {
         fillDefaults(defaults);
         try {
-          const response = await fetch("/api/defaults");
+          const response = await fetch(apiPath("/api/defaults"));
           if (!response.ok) throw new Error("server offline");
           fillDefaults(await response.json());
           setStatus("ok", "Server ready");
@@ -274,6 +288,14 @@
         payload.fbp_seasonality = false;
         payload.hampel_k_mad = defaults.config.hampel_k_mad;
         return payload;
+      }
+
+      function applyPlantDefaults() {
+        const plant = form.elements.plant_id;
+        const selected = plant.options[plant.selectedIndex];
+        if (!selected) return;
+        form.elements.inverter_name.value = selected.dataset.defaultInverter || form.elements.inverter_name.value;
+        form.elements.string_port.value = selected.dataset.defaultStringPort || form.elements.string_port.value;
       }
 
       function fmt(value, digits = 3, suffix = "") {
@@ -425,7 +447,7 @@
         runButton.textContent = "Running...";
         setStatus("neutral", "Analysis running");
         try {
-          const response = await fetch("/api/analyze", {
+          const response = await fetch(apiPath("/api/analyze"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(collectPayload())
@@ -453,6 +475,8 @@
         const advanced = document.getElementById("advancedFields");
         advanced.hidden = !advanced.hidden;
       });
+
+      form.elements.plant_id.addEventListener("change", applyPlantDefaults);
 
       drawEmpty();
       loadDefaults();

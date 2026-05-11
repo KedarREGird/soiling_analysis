@@ -37,6 +37,20 @@ python -m soiling_analysis.web_server
 
 Open `http://127.0.0.1:8765`, choose the plant, inverter, string port, date window, and exposed algorithm parameters, then run the analysis. The browser receives only results; TigerData credentials stay in the local Python server process.
 
+## Deploy on Render
+
+The repository includes `render.yaml` for a Render Python web service. Render should use:
+
+```text
+Build Command: pip install -r requirements.txt
+Start Command: python -m soiling_analysis.web_server --host 0.0.0.0 --port $PORT
+Health Check Path: /api/health
+```
+
+Set the TigerData variables from `.env.example` in Render as environment variables. Also set `SOILING_BASIC_AUTH_PASSWORD` so the public web app is password-protected.
+
+After the service deploys, add a Render custom domain such as `soiling.kedardeshmukh.com` or move `sa.kedardeshmukh.com` from GitHub Pages to the Render service.
+
 ## Run the Plant Pipeline
 
 ```bash

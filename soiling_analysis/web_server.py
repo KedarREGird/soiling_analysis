@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hmac
 import json
 import mimetypes
+import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,13 +24,30 @@ from .config import SoilingConfig
 
 
 ROOT = Path(__file__).resolve().parents[1]
+API_PATHS = {"/api/defaults", "/api/defaults/", "/api/analyze", "/api/analyze/"}
+HEALTH_PATHS = {"/api/health", "/api/health/"}
 
 
 class SoilingHandler(BaseHTTPRequestHandler):
     server_version = "SoilingAnalysisWeb/0.1"
 
+    def do_OPTIONS(self) -> None:  # noqa: N802 - stdlib hook name
+        if self._request_path() not in API_PATHS | HEALTH_PATHS:
+            self.send_error(HTTPStatus.NOT_FOUND, "Unknown endpoint")
+            return
+
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self._send_cors_headers()
+        self.end_headers()
+
     def do_GET(self) -> None:  # noqa: N802 - stdlib hook name
-        if self.path in {"/api/defaults", "/api/defaults/"}:
+        path = self._request_path()
+        if path in HEALTH_PATHS:
+            self._send_json({"status": "ok"})
+            return
+        if self._reject_unauthorized():
+            return
+        if path in {"/api/defaults", "/api/defaults/"}:
             self._send_json(
                 {
                     "plant_id": DEFAULT_PLANT_UUID,
@@ -43,7 +63,9 @@ class SoilingHandler(BaseHTTPRequestHandler):
         self._serve_static()
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib hook name
-        if self.path not in {"/api/analyze", "/api/analyze/"}:
+        if self._reject_unauthorized():
+            return
+        if self._request_path() not in {"/api/analyze", "/api/analyze/"}:
             self.send_error(HTTPStatus.NOT_FOUND, "Unknown endpoint")
             return
 
@@ -61,8 +83,34 @@ class SoilingHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         print(f"{self.address_string()} - {fmt % args}")
 
+    def _request_path(self) -> str:
+        return self.path.split("?", 1)[0]
+
+    def _reject_unauthorized(self) -> bool:
+        username = os.environ.get("SOILING_BASIC_AUTH_USERNAME")
+        password = os.environ.get("SOILING_BASIC_AUTH_PASSWORD")
+        if not username or not password:
+            return False
+
+        auth = self.headers.get("Authorization", "")
+        prefix = "Basic "
+        if auth.startswith(prefix):
+            try:
+                decoded = base64.b64decode(auth[len(prefix):], validate=True).decode("utf-8")
+            except (UnicodeDecodeError, ValueError):
+                decoded = ""
+            expected = f"{username}:{password}"
+            if hmac.compare_digest(decoded, expected):
+                return False
+
+        self.send_response(HTTPStatus.UNAUTHORIZED)
+        self.send_header("WWW-Authenticate", 'Basic realm="Soiling Analysis"')
+        self._send_cors_headers()
+        self.end_headers()
+        return True
+
     def _serve_static(self) -> None:
-        raw_path = self.path.split("?", 1)[0].strip("/")
+        raw_path = self._request_path().strip("/")
         rel_path = raw_path or "index.html"
         candidate = (ROOT / rel_path).resolve()
         if not str(candidate).startswith(str(ROOT)) or not candidate.is_file():
@@ -81,15 +129,31 @@ class SoilingHandler(BaseHTTPRequestHandler):
         raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self._send_cors_headers()
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
 
+    def _send_cors_headers(self) -> None:
+        origin = self.headers.get("Origin")
+        allowed = [
+            item.strip()
+            for item in os.environ.get("SOILING_ALLOWED_ORIGINS", "*").split(",")
+            if item.strip()
+        ]
+        if "*" in allowed:
+            self.send_header("Access-Control-Allow-Origin", "*")
+        elif origin in allowed:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the local soiling-analysis web UI.")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", default=8765, type=int)
+    parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
+    parser.add_argument("--port", default=int(os.environ.get("PORT", "8765")), type=int)
     args = parser.parse_args()
 
     server = ThreadingHTTPServer((args.host, args.port), SoilingHandler)
