@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soiling-analysis"
+version = "0.1.0"
+description = "Standalone PV soiling analysis tools and web interface."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "prophet>=1.1.5",
+    "psycopg2-binary>=2.9",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ipykernel>=6.0",
+    "jupyterlab>=4.0",
+    "pytest>=7.0",
+]
+
+[project.scripts]
+soiling-run = "soiling_analysis.run:main"
+soiling-web = "soiling_analysis.web_server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["soiling_analysis*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

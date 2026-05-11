@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Soiling Analysis</title>
+    <meta
+      name="description"
+      content="PV soiling analysis interface for string-level PR, cleaning events, and soiling-rate estimates."
+    >
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">PV String Diagnostics</p>
+        <h1>Soiling Analysis</h1>
+      </div>
+      <div id="serverStatus" class="status neutral">Checking server</div>
+    </header>
+
+    <main class="app-shell">
+      <form id="analysisForm" class="panel controls">
+        <section>
+          <h2>Target</h2>
+          <label>
+            Plant UUID
+            <input name="plant_id" autocomplete="off" required>
+          </label>
+          <label>
+            Inverter name
+            <input name="inverter_name" autocomplete="off" required>
+          </label>
+          <label>
+            String port
+            <input name="string_port" type="number" min="1" max="32" step="1" required>
+          </label>
+          <div class="two-up">
+            <label>
+              Start date
+              <input name="start_date" type="date" required>
+            </label>
+            <label>
+              End date
+              <input name="end_date" type="date" required>
+            </label>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-title">
+            <h2>Detection</h2>
+            <button id="advancedToggle" type="button" class="ghost">Advanced</button>
+          </div>
+          <label>
+            IQR alpha
+            <input name="ce_iqr_alpha" type="number" min="0" max="20" step="0.1" required>
+          </label>
+          <label>
+            Rain threshold, mm
+            <input name="ce_rain_threshold_mm" type="number" min="0" max="100" step="0.1" required>
+          </label>
+          <div id="advancedFields" class="advanced" hidden>
+            <div class="two-up">
+              <label>
+                Hampel window
+                <input name="hampel_window_size" type="number" min="3" max="31" step="2" required>
+              </label>
+              <label>
+                Hampel sigmas
+                <input name="hampel_n_sigmas" type="number" min="0.1" max="10" step="0.1" required>
+              </label>
+            </div>
+            <div class="two-up">
+              <label>
+                Rolling median
+                <input name="ce_rolling_median_window" type="number" min="3" max="31" step="2" required>
+              </label>
+              <label>
+                Match window, days
+                <input name="ground_truth_match_window_days" type="number" min="0" max="10" step="1" required>
+              </label>
+            </div>
+            <div class="two-up">
+              <label>
+                Min segment days
+                <input name="min_segment_length_days" type="number" min="1" max="60" step="1" required>
+              </label>
+              <label>
+                Reliable segment days
+                <input name="reliable_interval_min_days" type="number" min="1" max="120" step="1" required>
+              </label>
+            </div>
+            <div class="two-up">
+              <label>
+                Flat threshold days
+                <input name="flat_profile_threshold_days" type="number" min="1" max="60" step="1" required>
+              </label>
+              <label>
+                Prophet changepoints
+                <input name="fbp_n_changepoints" type="number" min="0" max="200" step="1" required>
+              </label>
+            </div>
+            <label>
+              Prophet changepoint range
+              <input name="fbp_changepoint_range" type="number" min="0.1" max="1" step="0.05" required>
+            </label>
+          </div>
+        </section>
+
+        <button id="runButton" class="primary" type="submit">Run Analysis</button>
+        <p id="formHint" class="hint">Run `python -m soiling_analysis.web_server` locally to enable the background Python analysis endpoint.</p>
+      </form>
+
+      <section class="workspace">
+        <div class="panel chart-panel">
+          <div class="toolbar">
+            <div>
+              <p class="eyebrow">Output</p>
+              <h2 id="chartTitle">PR and Cleaning Events</h2>
+            </div>
+            <div id="runMeta" class="meta">No run yet</div>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="analysisChart" width="1200" height="560"></canvas>
+          </div>
+          <div class="legend">
+            <span><i class="swatch raw"></i>Raw PR</span>
+            <span><i class="swatch filtered"></i>Filtered PR</span>
+            <span><i class="swatch trend"></i>Trend</span>
+            <span><i class="swatch event"></i>Cleaning event</span>
+            <span><i class="swatch rain"></i>Rainfall</span>
+          </div>
+        </div>
+
+        <div class="metric-grid" id="metrics">
+          <article class="metric">
+            <span>Days</span>
+            <strong>-</strong>
+          </article>
+          <article class="metric">
+            <span>Events</span>
+            <strong>-</strong>
+          </article>
+          <article class="metric">
+            <span>Segments</span>
+            <strong>-</strong>
+          </article>
+          <article class="metric">
+            <span>Overall rate</span>
+            <strong>-</strong>
+          </article>
+        </div>
+
+        <div class="lower-grid">
+          <section class="panel">
+            <div class="toolbar">
+              <h2>Detected Cleaning Events</h2>
+              <span id="eventCount" class="meta">0 events</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Source</th>
+                    <th>Confidence</th>
+                  </tr>
+                </thead>
+                <tbody id="eventsBody">
+                  <tr><td colspan="3">Run an analysis to populate events.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="toolbar">
+              <h2>Segment Rates</h2>
+              <span id="segmentCount" class="meta">0 segments</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Window</th>
+                    <th>Days</th>
+                    <th>Rate</th>
+                    <th>Fit</th>
+                  </tr>
+                </thead>
+                <tbody id="segmentsBody">
+                  <tr><td colspan="4">Run an analysis to populate segment rates.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <template id="emptyChartMessage">
+      <span>Run an analysis to render the graph.</span>
+    </template>
+
+    <script>
+      const defaults = {
+        plant_id: "b0000000-0000-0000-0000-000000000002",
+        inverter_name: "ACB01-INV05",
+        string_port: 4,
+        start_date: "2026-02-15",
+        end_date: "2026-05-05",
+        config: {
+          hampel_window_size: 7,
+          hampel_n_sigmas: 1,
+          hampel_k_mad: 1.4826,
+          ce_rolling_median_window: 7,
+          ce_iqr_alpha: 5,
+          ce_rain_threshold_mm: 1,
+          min_segment_length_days: 3,
+          flat_profile_threshold_days: 11,
+          reliable_interval_min_days: 14,
+          fbp_n_changepoints: 50,
+          fbp_changepoint_range: 1,
+          fbp_seasonality: false,
+          ground_truth_match_window_days: 1
+        }
+      };
+
+      const form = document.getElementById("analysisForm");
+      const statusEl = document.getElementById("serverStatus");
+      const runButton = document.getElementById("runButton");
+      const hintEl = document.getElementById("formHint");
+      const chart = document.getElementById("analysisChart");
+      const ctx = chart.getContext("2d");
+
+      function setStatus(kind, text) {
+        statusEl.className = `status ${kind}`;
+        statusEl.textContent = text;
+      }
+
+      function fillDefaults(data) {
+        const merged = { ...defaults, ...data, config: { ...defaults.config, ...(data.config || {}) } };
+        for (const [key, value] of Object.entries(merged)) {
+          if (key === "config") continue;
+          const input = form.elements[key];
+          if (input) input.value = value;
+        }
+        for (const [key, value] of Object.entries(merged.config)) {
+          const input = form.elements[key];
+          if (input) input.value = value;
+        }
+      }
+
+      async function loadDefaults() {
+        fillDefaults(defaults);
+        try {
+          const response = await fetch("/api/defaults");
+          if (!response.ok) throw new Error("server offline");
+          fillDefaults(await response.json());
+          setStatus("ok", "Server ready");
+          hintEl.textContent = "The browser will send parameters to the local Python server; database credentials stay server-side.";
+        } catch {
+          setStatus("warn", "Server not connected");
+        }
+      }
+
+      function collectPayload() {
+        const payload = {};
+        for (const element of form.elements) {
+          if (!element.name) continue;
+          payload[element.name] = element.type === "number" ? Number(element.value) : element.value;
+        }
+        payload.fbp_seasonality = false;
+        payload.hampel_k_mad = defaults.config.hampel_k_mad;
+        return payload;
+      }
+
+      function fmt(value, digits = 3, suffix = "") {
+        if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+        return `${Number(value).toFixed(digits)}${suffix}`;
+      }
+
+      function dateToX(date, min, max, left, width) {
+        const value = new Date(`${date}T00:00:00`).getTime();
+        return left + ((value - min) / (max - min || 1)) * width;
+      }
+
+      function drawChart(result) {
+        const pr = result.series.pr;
+        const filtered = result.series.filtered;
+        const rainfall = result.series.rainfall;
+        const allValues = [...pr.map((p) => p.pr), ...filtered.map((p) => p.filtered)].filter((v) => v !== null);
+        const allDates = [...pr.map((p) => p.date), ...rainfall.map((p) => p.date)];
+        const minTime = Math.min(...allDates.map((d) => new Date(`${d}T00:00:00`).getTime()));
+        const maxTime = Math.max(...allDates.map((d) => new Date(`${d}T00:00:00`).getTime()));
+        const yMin = Math.max(0, Math.min(...allValues) - 0.04);
+        const yMax = Math.max(...allValues, 1) + 0.04;
+        const rainMax = Math.max(1, ...rainfall.map((p) => p.rain_mm || 0));
+        const pad = { left: 72, right: 56, top: 44, bottom: 58 };
+        const width = chart.width - pad.left - pad.right;
+        const height = chart.height - pad.top - pad.bottom;
+        const xFor = (date) => dateToX(date, minTime, maxTime, pad.left, width);
+        const yFor = (value) => pad.top + ((yMax - value) / (yMax - yMin || 1)) * height;
+        const rainHeight = height * 0.24;
+
+        ctx.clearRect(0, 0, chart.width, chart.height);
+        ctx.fillStyle = "#fbfcfc";
+        ctx.fillRect(0, 0, chart.width, chart.height);
+        ctx.strokeStyle = "#d8e1e1";
+        ctx.lineWidth = 1;
+        ctx.font = "20px ui-sans-serif, system-ui, sans-serif";
+        ctx.fillStyle = "#526161";
+
+        const ticks = 5;
+        for (let i = 0; i <= ticks; i += 1) {
+          const value = yMin + ((yMax - yMin) / ticks) * i;
+          const y = yFor(value);
+          ctx.beginPath();
+          ctx.moveTo(pad.left, y);
+          ctx.lineTo(chart.width - pad.right, y);
+          ctx.stroke();
+          ctx.fillText(value.toFixed(2), 18, y + 7);
+        }
+
+        rainfall.forEach((point) => {
+          const rain = point.rain_mm || 0;
+          if (rain <= 0) return;
+          const x = xFor(point.date);
+          const barH = (rain / rainMax) * rainHeight;
+          ctx.fillStyle = "rgba(37, 99, 235, 0.22)";
+          ctx.fillRect(x - 4, pad.top + height - barH, 8, barH);
+        });
+
+        result.events.forEach((event) => {
+          const x = xFor(event.date);
+          ctx.strokeStyle = event.source === "rainfall" ? "#2563eb" : event.source === "both" ? "#7c3aed" : "#d97706";
+          ctx.lineWidth = 3;
+          ctx.setLineDash([10, 8]);
+          ctx.beginPath();
+          ctx.moveTo(x, pad.top);
+          ctx.lineTo(x, pad.top + height);
+          ctx.stroke();
+        });
+        ctx.setLineDash([]);
+
+        function drawLine(points, key, color, lineWidth) {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = lineWidth;
+          ctx.beginPath();
+          let started = false;
+          points.forEach((point) => {
+            const value = point[key];
+            if (value === null || value === undefined) return;
+            const x = xFor(point.date);
+            const y = yFor(value);
+            if (!started) {
+              ctx.moveTo(x, y);
+              started = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
+          });
+          ctx.stroke();
+        }
+
+        drawLine(pr, "pr", "rgba(15, 118, 110, 0.28)", 3);
+        drawLine(filtered, "filtered", "#0f766e", 4);
+        result.segments.forEach((segment) => drawLine(segment.points, "trend", "#111827", 3));
+
+        ctx.fillStyle = "#102525";
+        ctx.font = "700 22px ui-sans-serif, system-ui, sans-serif";
+        ctx.fillText("Corrected PR", pad.left, 28);
+        ctx.font = "18px ui-sans-serif, system-ui, sans-serif";
+        ctx.fillStyle = "#526161";
+        ctx.fillText("Date", chart.width - pad.right - 28, chart.height - 16);
+      }
+
+      function updateMetrics(result) {
+        const metrics = document.getElementById("metrics").children;
+        metrics[0].querySelector("strong").textContent = result.summary.days_loaded;
+        metrics[1].querySelector("strong").textContent = result.summary.classified_events;
+        metrics[2].querySelector("strong").textContent = result.summary.segments;
+        metrics[3].querySelector("strong").textContent = fmt(result.summary.overall_rate_pct_per_day, 4, " %/d");
+      }
+
+      function updateTables(result) {
+        const eventsBody = document.getElementById("eventsBody");
+        const segmentsBody = document.getElementById("segmentsBody");
+        document.getElementById("eventCount").textContent = `${result.events.length} events`;
+        document.getElementById("segmentCount").textContent = `${result.segments.length} segments`;
+
+        eventsBody.innerHTML = result.events.length
+          ? result.events.map((event) => `
+              <tr>
+                <td>${event.date}</td>
+                <td><span class="pill ${event.source}">${event.source}</span></td>
+                <td>${fmt(event.confidence, 2)}</td>
+              </tr>`).join("")
+          : `<tr><td colspan="3">No cleaning events detected for this selection.</td></tr>`;
+
+        segmentsBody.innerHTML = result.segments.length
+          ? result.segments.map((segment) => `
+              <tr>
+                <td>${segment.start} to ${segment.end}</td>
+                <td>${segment.days}</td>
+                <td>${fmt(segment.rate_pct_per_day, 4, " %/d")}</td>
+                <td>${segment.reliable ? "reliable" : "short"} · ${segment.fit_status}</td>
+              </tr>`).join("")
+          : `<tr><td colspan="4">No valid segments built for this selection.</td></tr>`;
+      }
+
+      function drawEmpty() {
+        ctx.clearRect(0, 0, chart.width, chart.height);
+        ctx.fillStyle = "#fbfcfc";
+        ctx.fillRect(0, 0, chart.width, chart.height);
+        ctx.fillStyle = "#526161";
+        ctx.font = "24px ui-sans-serif, system-ui, sans-serif";
+        ctx.fillText("Run an analysis to render the graph.", 72, 92);
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        runButton.disabled = true;
+        runButton.textContent = "Running...";
+        setStatus("neutral", "Analysis running");
+        try {
+          const response = await fetch("/api/analyze", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(collectPayload())
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Analysis failed");
+          document.getElementById("chartTitle").textContent =
+            `${data.inputs.inverter_name} port ${data.inputs.string_port}`;
+          document.getElementById("runMeta").textContent =
+            `${data.inputs.start_date} to ${data.inputs.end_date} · ${data.topology.module_type_name || "module"}`;
+          drawChart(data);
+          updateMetrics(data);
+          updateTables(data);
+          setStatus("ok", "Run complete");
+        } catch (error) {
+          setStatus("error", "Run failed");
+          alert(error.message);
+        } finally {
+          runButton.disabled = false;
+          runButton.textContent = "Run Analysis";
+        }
+      });
+
+      document.getElementById("advancedToggle").addEventListener("click", () => {
+        const advanced = document.getElementById("advancedFields");
+        advanced.hidden = !advanced.hidden;
+      });
+
+      drawEmpty();
+      loadDefaults();
+    </script>
+  </body>
+</html>
