@@ -1,4 +1,5 @@
 .env
+.render-login
 .venv/
 __pycache__/
 *.py[cod]
